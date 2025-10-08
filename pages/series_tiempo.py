@@ -123,13 +123,36 @@ df_fore["date"] = df_fore["timestamp"].dt.date
 by_day = df_fore.groupby("date", as_index=False)["yhat"].sum().rename(columns={"yhat":"total_dia"})
 st.bar_chart(by_day.set_index("date"), height=220, use_container_width=True)
 
-# Top horas con mayor yhat
-top_hours = (df_fore
-             .sort_values("yhat", ascending=False)
-             .head(15)[["timestamp","yhat"]])
-top_hours["dow"] = top_hours["timestamp"].dt.day_name(locale="es_MX") if hasattr(pd.Series.dt, "day_name") else top_hours["timestamp"].dt.dayofweek
+# Top horas
+top_hours = (
+    df_fore.sort_values("yhat", ascending=False)
+    .head(15)[["timestamp", "yhat"]]
+    .copy()
+)
+
+# Función robusta para nombres de día en español sin depender del locale del SO
+DAY_NAME_ES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+def get_day_name_es(series: pd.Series) -> pd.Series:
+    """Devuelve nombres de día en español. Intenta usar locale si disponible;
+    si no, recurre a un mapeo manual."""
+    try:
+        # Intento (puede fallar si el locale no existe)
+        return series.dt.day_name(locale="es_MX")
+    except Exception:
+        return series.dt.dayofweek.map(lambda i: DAY_NAME_ES[i])
+
+top_hours["dia_semana"] = get_day_name_es(top_hours["timestamp"])
+top_hours["hora"] = top_hours["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
+
 st.write("**Top 15 horas esperadas (yhat):**")
-st.dataframe(top_hours.rename(columns={"yhat":"yhat (conteos esperados)"}), use_container_width=True)
+st.dataframe(
+    top_hours.rename(columns={
+        "yhat": "yhat (conteos esperados)",
+        "dia_semana": "día_semana"
+    })[["hora", "día_semana", "yhat (conteos esperados)"]],
+    use_container_width=True
+)
 
 # ================================
 # Descarga y tabla
@@ -137,15 +160,19 @@ st.dataframe(top_hours.rename(columns={"yhat":"yhat (conteos esperados)"}), use_
 st.subheader("Tabla del forecast y descarga")
 st.dataframe(df_fore, use_container_width=True, height=320)
 
-# Botón de descarga (CSV)
 csv_bytes = df_fore.to_csv(index=False).encode("utf-8")
-st.download_button("Descargar forecast (CSV)", data=csv_bytes, file_name="forecast_hourly_next168.csv", mime="text/csv")
+st.download_button(
+    "Descargar forecast (CSV)",
+    data=csv_bytes,
+    file_name="forecast_hourly_next168.csv",
+    mime="text/csv"
+)
 
 # Nota interpretativa
 st.markdown("""
 **Notas de interpretación**
 - `yhat` representa el **conteo esperado** de accidentes por hora en el próximo horizonte.
 - El modelo SARIMAX se entrenó con estacionalidad **diaria (24h)** y componentes de **semana** vía Fourier (si aplicaste K>0), además de variables de calendario (DOW, hora en seno/coseno).
-- Dado que el forecast se guardó sin bandas de confianza (por uso de `cov_type="none"`), se muestra la trayectoria puntual. Si necesitas intervalos, entrena con `cov_type="robust"` y guarda `yhat_lo/yhat_hi`.
+- Dado que el forecast se guardó sin bandas de confianza (por uso de `cov_type="none"`), se muestra la trayectoria puntual. Si necesitas intervalos, entrena con `cov_type="robust"` y guarda columnas como `yhat_lo`, `yhat_hi`.
 - Usa el **resumen por día** y los **picos horarios** para planear recursos (operativos, preventivos) en las horas/días con mayor demanda esperada.
 """)
